@@ -1,13 +1,13 @@
 const functions = require("firebase-functions");
 const https = require("https");
 const admin = require("firebase-admin");
-const express = require("express");
-const cors = require("cors");
 admin.initializeApp({
   credential: admin.credential.applicationDefault(),
 });
-
+const paystackApi = require('./paystackapi');
 const db = admin.firestore();
+
+exports.paystackapi = functions.https.onRequest(paystackApi);
 
 exports.getPaymentLink = functions.https.onRequest((request, response) => {
   let result;
@@ -111,9 +111,11 @@ exports.sendNotification = functions.https.onRequest(
       notification: {
         title: `Driver is on its ways. Your Otp is ` + otp,
         body:
-`Time: `+ time+
-`Name: ` +data1["name"] +
-`
+          `Time: ` +
+          time +
+          `Name: ` +
+          data1["name"] +
+          `
 Phone number: 3989899889
 Car Name: Nissan
 Car color: red`,
@@ -137,14 +139,14 @@ Car color: red`,
     const res = await userRef.update({
       notification: notify,
     });
-    admin
+    await admin
       .messaging()
       .send(message)
       .then((res) => {
-        // Response is a message ID string.
+        console.log("notified user");
         response.send({
           status: true,
-          response: res,
+          data: res,
         });
       })
       .catch((error) => {
@@ -155,13 +157,55 @@ Car color: red`,
       });
   }
 );
-const app = express();
-app.use(
-  cors({
-    origin: true,
-  })
-);
-app.get("/", function (req, res) {
-  res.sendFile("views/policy.html", { root: __dirname });
+
+exports.policy = functions.https.onRequest((request, response) => {
+  response.sendFile("views/policy.html", { root: __dirname });
 });
-exports.policy = functions.https.onRequest(app);
+
+exports.notifywhenbooking = functions.https.onRequest(
+  async (request, response) => {
+    const getDrivers = await db.collection("riders").get();
+    const registrationTokens = [];
+    getDrivers.docs.map((doc, index) => {
+      const element = doc.data();
+      const token = element["pushToken"];
+      registrationTokens.push(token);
+    });
+    console.log("total tokens: " + registrationTokens.length);
+    const messsage = {
+      notification: {
+        title: "There is a new Booking on AvenRide!",
+        body: "Open the app to start taking rides",
+      },
+      android: {
+        notification: {
+          click_action: "FLUTTER_NOTIFICATION_CLICK",
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            category: "INVITE_CATEGORY",
+          },
+        },
+      },
+      tokens: registrationTokens,
+    };
+    await admin
+      .messaging()
+      .sendMulticast(messsage)
+      .then((res) => {
+        console.log(res.successCount + " messages were sent successfully");
+        response.send({
+          status: true,
+          response: res.successCount + " messages were sent successfully",
+        });
+      })
+      .catch((error) => {
+        response.send({
+          status: false,
+          error: error,
+        });
+      });
+  }
+);
